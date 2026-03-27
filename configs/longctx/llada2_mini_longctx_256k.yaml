@@ -1,0 +1,81 @@
+# Context-extension fine-tune: LLaDA2-mini 128k -> 256k  (LongRoPE 8x)
+#
+# Pre-requisite: produce the 128k checkpoint first, then:
+#
+#   python scripts/extend_rope_context.py \
+#       --model_path  ./configs/model_configs/llada2_mini_128k \
+#       --output_path ./configs/model_configs/llada2_mini_256k \
+#       --target_length 262144 --method longrope
+#
+# Set model_path below to the 128k fine-tuned weights.
+# LongRoPE bootstraps long_factor/short_factor=1.0; fine-tuning learns them.
+
+model:
+  config_path: ./configs/model_configs/llada2_mini_256k
+  model_path:  ./output/llada2_mini_longctx_128k/hf_ckpt  # 128k fine-tuned weights
+  tokenizer_path: ./LLaDA2.0-mini
+  attn_implementation: sdpa
+  moe_implementation: fused
+
+data:
+  data_type: text
+  datasets_type: nemotron_streaming
+  nemotron_subsets:
+    - Nemotron-Pretraining-Code-Concepts
+    - Nemotron-Pretraining-Economics
+    - Nemotron-Pretraining-Formal-Logic
+    - Nemotron-Pretraining-Multiple-Choice
+    - Nemotron-Pretraining-Unconditional-Algorithmic
+  max_seq_len: 262144
+  min_token_len: 131072   # 0.5 * 262144
+  max_token_len: 262144
+  shuffle_buffer: 2000
+  noise_range_low: 0.3
+  noise_range_high: 0.8
+  num_workers: 4
+  dataloader_type: native
+  drop_last: true
+
+train:
+  output_dir: ./output/llada2_mini_longctx_256k
+  data_parallel_mode: fsdp2
+  tensor_parallel_size: 1
+  ulysses_parallel_size: 1
+  expert_parallel_size: 1
+  context_parallel_size: 4          # 256k requires CP>=4; increase if OOM
+  global_batch_size: 2
+  micro_batch_size: 1
+  num_train_epochs: 1
+  rmpad: false
+  rmpad_with_pos_ids: false
+  bsz_warmup_ratio: 0.0
+  dyn_bsz_margin: 0
+  dyn_bsz_buffer_size: 200
+  optimizer: adamw
+  beta1: 0.9
+  beta2: 0.999
+  lr: 5.0e-6
+  lr_min: 5.0e-7
+  lr_warmup_ratio: 0.05
+  lr_decay_style: cosine
+  lr_decay_ratio: 1.0
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  enable_mixed_precision: true
+  enable_gradient_checkpointing: true
+  enable_full_shard: true
+  enable_fsdp_offload: false
+  enable_activation_offload: true   # needed for 256k activations
+  init_device: meta
+  broadcast_model_weights_from_rank0: true
+  enable_full_determinism: false
+  empty_cache_steps: 50
+  ckpt_manager: dcp
+  load_checkpoint_path: ""
+  save_steps: 100
+  save_epochs: 1
+  save_hf_weights: true
+  block_diffusion_mode: false
+  same_token_labels: false
+  use_wandb: false
+  log_steps: 1

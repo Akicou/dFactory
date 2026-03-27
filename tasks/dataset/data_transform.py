@@ -121,6 +121,68 @@ def sft_noise_transition(x_0, noise_range, maskable_mask, mask_token_id):
     x_t = torch.where(move_indices, mask_token_id, x_0)
     return x_t
 
+def process_mdm_text_example(
+    example: dict,
+    tokenizer,
+    max_seq_len: int,
+    text_keys: Union[str, List[str]] = "text",
+    noise_range: Tuple[float, float] = (0.3, 0.8),
+    mask_token_id: int = 156895,
+    source_name: Optional[str] = None,
+) -> List[Dict[str, "torch.Tensor"]]:
+    """
+    Transform for raw pretraining text (e.g. Nemotron-Pretraining-Specialized-v1.1).
+
+    The entire sequence is treated as response tokens — no prompt masking.
+    This is appropriate for context-extension fine-tuning where we want gradient
+    signal on all positions, including the newly extended ones.
+
+    The ``text`` field is tokenized, truncated / padded to ``max_seq_len``, and
+    noise-masked identically to the SFT transform.
+    """
+    if isinstance(text_keys, str):
+        text: str = example[text_keys]
+    elif isinstance(text_keys, list):
+        for key in text_keys:
+            if key in example:
+                text = example[key]
+                break
+        else:
+            raise ValueError(f"None of the keys {text_keys} found in example.")
+    else:
+        raise ValueError(f"text_keys must be str or list, got {type(text_keys)}")
+
+    tokenized = tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        max_length=max_seq_len,
+        padding="max_length",
+        add_special_tokens=False,
+    ).input_ids.squeeze(0)  # (max_seq_len,)
+
+    labels = tokenized.clone()
+    # All positions are maskable — no prompt prefix to protect
+    maskable_mask = torch.ones(max_seq_len, dtype=torch.bool)
+
+    noisy_input_ids = sft_noise_transition(
+        tokenized.clone(),
+        noise_range=noise_range,
+        maskable_mask=maskable_mask,
+        mask_token_id=mask_token_id,
+    )
+
+    loss_mask = noisy_input_ids == mask_token_id
+    labels[~loss_mask] = -100
+
+    return [{
+        "input_ids": tokenized,
+        "noisy_input_ids": noisy_input_ids,
+        "attention_mask": torch.ones_like(tokenized),
+        "labels": labels,
+    }]
+
+
 def apply_chat_template_mdm(messages, tokenizer, max_length):
     inputs_str = tokenizer.apply_chat_template(messages, tokenize=False)
     prompt_str = tokenizer.apply_chat_template(messages[:-1], tokenize=False, add_generation_prompt=True)

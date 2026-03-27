@@ -1,0 +1,84 @@
+# Context-extension fine-tune: LLaDA2-mini 16k -> 64k  (YaRN 2x)
+#
+# Pre-requisite: run extend_rope_context.py first to produce the patched config dir:
+#
+#   python scripts/extend_rope_context.py \
+#       --model_path  ./configs/model_configs/llada2_mini \
+#       --output_path ./configs/model_configs/llada2_mini_64k \
+#       --target_length 65536 --method yarn
+#
+# Then launch:
+#   bash train.sh tasks/train_longctx.py --config configs/longctx/llada2_mini_longctx_64k.yaml
+
+model:
+  config_path: ./configs/model_configs/llada2_mini_64k  # patched by extend_rope_context.py
+  model_path:  ./LLaDA2.0-mini                           # base weights (HF checkpoint dir)
+  tokenizer_path: ./LLaDA2.0-mini
+  attn_implementation: sdpa                              # use flash_attention_2 if installed
+  moe_implementation: fused
+
+data:
+  # Nemotron dataset settings
+  data_type: text                    # triggers process_mdm_text_example
+  datasets_type: nemotron_streaming  # triggers build_nemotron_streaming_dataset
+  nemotron_subsets:                  # which subsets to include (all 5 by default)
+    - Nemotron-Pretraining-Code-Concepts
+    - Nemotron-Pretraining-Economics
+    - Nemotron-Pretraining-Formal-Logic
+    - Nemotron-Pretraining-Multiple-Choice
+    - Nemotron-Pretraining-Unconditional-Algorithmic
+  max_seq_len: 65536
+  # Only keep examples whose estimated token count is in [0.5 * max_seq_len, max_seq_len].
+  # This ensures gradient signal comes from positions beyond the original 16k limit.
+  min_token_len: 32768   # 0.5 * 65536
+  max_token_len: 65536
+  shuffle_buffer: 10000
+  noise_range_low: 0.3
+  noise_range_high: 0.8
+  num_workers: 4
+  dataloader_type: native
+  drop_last: true
+
+train:
+  output_dir: ./output/llada2_mini_longctx_64k
+  data_parallel_mode: fsdp2
+  tensor_parallel_size: 1
+  ulysses_parallel_size: 1
+  expert_parallel_size: 1
+  context_parallel_size: 1          # increase to 2 if 65536 OOMs
+  global_batch_size: 8
+  micro_batch_size: 1
+  num_train_epochs: 1
+  rmpad: false
+  rmpad_with_pos_ids: false
+  bsz_warmup_ratio: 0.0
+  dyn_bsz_margin: 0
+  dyn_bsz_buffer_size: 200
+  optimizer: adamw
+  beta1: 0.9
+  beta2: 0.999
+  lr: 2.0e-5
+  lr_min: 2.0e-6
+  lr_warmup_ratio: 0.05
+  lr_decay_style: cosine
+  lr_decay_ratio: 1.0
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  enable_mixed_precision: true
+  enable_gradient_checkpointing: true
+  enable_full_shard: true
+  enable_fsdp_offload: false
+  enable_activation_offload: false
+  init_device: meta
+  broadcast_model_weights_from_rank0: true
+  enable_full_determinism: false
+  empty_cache_steps: 100
+  ckpt_manager: dcp
+  load_checkpoint_path: ""
+  save_steps: 200
+  save_epochs: 1
+  save_hf_weights: true
+  block_diffusion_mode: false   # full attention for context-extension phase
+  same_token_labels: false
+  use_wandb: false
+  log_steps: 1

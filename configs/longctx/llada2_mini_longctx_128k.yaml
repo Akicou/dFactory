@@ -1,0 +1,80 @@
+# Context-extension fine-tune: LLaDA2-mini 64k -> 128k  (YaRN 4x)
+#
+# Pre-requisite: produce the 64k checkpoint first, then:
+#
+#   python scripts/extend_rope_context.py \
+#       --model_path  ./configs/model_configs/llada2_mini_64k \
+#       --output_path ./configs/model_configs/llada2_mini_128k \
+#       --target_length 131072 --method yarn
+#
+# Set model_path below to the 64k fine-tuned weights, not the base weights.
+
+model:
+  config_path: ./configs/model_configs/llada2_mini_128k
+  model_path:  ./output/llada2_mini_longctx_64k/hf_ckpt  # 64k fine-tuned weights
+  tokenizer_path: ./LLaDA2.0-mini
+  attn_implementation: sdpa
+  moe_implementation: fused
+
+data:
+  data_type: text
+  datasets_type: nemotron_streaming
+  nemotron_subsets:
+    - Nemotron-Pretraining-Code-Concepts
+    - Nemotron-Pretraining-Economics
+    - Nemotron-Pretraining-Formal-Logic
+    - Nemotron-Pretraining-Multiple-Choice
+    - Nemotron-Pretraining-Unconditional-Algorithmic
+  max_seq_len: 131072
+  min_token_len: 65536   # 0.5 * 131072
+  max_token_len: 131072
+  shuffle_buffer: 5000
+  noise_range_low: 0.3
+  noise_range_high: 0.8
+  num_workers: 4
+  dataloader_type: native
+  drop_last: true
+
+train:
+  output_dir: ./output/llada2_mini_longctx_128k
+  data_parallel_mode: fsdp2
+  tensor_parallel_size: 1
+  ulysses_parallel_size: 1
+  expert_parallel_size: 1
+  context_parallel_size: 2          # 128k sequences need CP>=2 on most GPU configs
+  global_batch_size: 4
+  micro_batch_size: 1
+  num_train_epochs: 1
+  rmpad: false
+  rmpad_with_pos_ids: false
+  bsz_warmup_ratio: 0.0
+  dyn_bsz_margin: 0
+  dyn_bsz_buffer_size: 200
+  optimizer: adamw
+  beta1: 0.9
+  beta2: 0.999
+  lr: 1.0e-5
+  lr_min: 1.0e-6
+  lr_warmup_ratio: 0.05
+  lr_decay_style: cosine
+  lr_decay_ratio: 1.0
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+  enable_mixed_precision: true
+  enable_gradient_checkpointing: true
+  enable_full_shard: true
+  enable_fsdp_offload: false
+  enable_activation_offload: false
+  init_device: meta
+  broadcast_model_weights_from_rank0: true
+  enable_full_determinism: false
+  empty_cache_steps: 100
+  ckpt_manager: dcp
+  load_checkpoint_path: ""
+  save_steps: 200
+  save_epochs: 1
+  save_hf_weights: true
+  block_diffusion_mode: false
+  same_token_labels: false
+  use_wandb: false
+  log_steps: 1
